@@ -79,7 +79,7 @@ let taxes = Target(name: "Taxes", url: URL(filePath: "/tmp/Taxes"))
 
 func onePlan(_ file: URL, to folder: URL) throws -> Plan {
     let target = Target(name: folder.lastPathComponent, url: folder)
-    return Plan(engine: "fixed", items: [PlanItem(file: file, stamp: try Stamp(of: file), decision: .move(target, confidence: 0.9))])
+    return Plan(source: file.deletingLastPathComponent(), engine: "fixed", targets: [target], items: [PlanItem(file: file, stamp: try Stamp(of: file), decision: .move(target, confidence: 0.9))])
 }
 
 @Test func applyThenUndoRestoresAndNeverOverwrites() throws {
@@ -125,4 +125,21 @@ func onePlan(_ file: URL, to folder: URL) throws -> Plan {
     let applied = try History(directory: root.appending(path: "state")).apply(plan)
     #expect(applied.moved.isEmpty && applied.skipped.count == 1)
     #expect(FileManager.default.fileExists(atPath: file.path))
+}
+
+@Test func applyMovesApprovedFilesAndLeavesAsksAlone() throws {
+    let root = try tempDir()
+    let folder = root.appending(path: "Work")
+    try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+    let target = Target(name: "Work", url: folder)
+    var items: [PlanItem] = []
+    for (name, decision) in [("chosen.txt", Decision.approved(target)), ("unsure.txt", .ask(target, confidence: 0.5))] {
+        let file = root.appending(path: "in/\(name)")
+        try write(name, to: file)
+        items.append(PlanItem(file: file, stamp: try Stamp(of: file), decision: decision))
+    }
+    let plan = Plan(source: root.appending(path: "in"), engine: "fixed", targets: [target], items: items)
+    let applied = try History(directory: root.appending(path: "state")).apply(plan)
+    #expect(applied.moved.map(\.to.lastPathComponent) == ["chosen.txt"])
+    #expect(FileManager.default.fileExists(atPath: root.appending(path: "in/unsure.txt").path))
 }

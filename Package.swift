@@ -7,6 +7,7 @@ let package = Package(
     targets: [
         .target(name: "PutawayCore"),
         .executableTarget(name: "putaway", dependencies: ["PutawayCore"]),
+        .executableTarget(name: "PutawayApp", dependencies: ["PutawayCore"]),
         .testTarget(name: "PutawayCoreTests", dependencies: ["PutawayCore"]),
     ]
 )

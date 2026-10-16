@@ -3,7 +3,7 @@ import Foundation
 /// Below this confidence a file is never moved without the user's say.
 public let autoMoveConfidence = 0.8
 
-public struct Target: Codable, Sendable, Equatable {
+public struct Target: Codable, Sendable, Hashable {
     public var name: String
     public var url: URL
 }
@@ -26,7 +26,17 @@ public struct Stamp: Codable, Sendable, Equatable {
 public enum Decision: Codable, Sendable, Equatable {
     case move(Target, confidence: Double)
     case ask(Target, confidence: Double?)
+    /// The user chose this folder, from a suggestion or by hand.
+    case approved(Target)
     case skip(String)
+
+    /// Where the file goes if the plan is applied now.
+    public var destination: Target? {
+        switch self {
+        case .move(let target, _), .approved(let target): target
+        case .ask, .skip: nil
+        }
+    }
 }
 
 public struct PlanItem: Codable, Sendable, Equatable {
@@ -36,7 +46,9 @@ public struct PlanItem: Codable, Sendable, Equatable {
 }
 
 public struct Plan: Codable, Sendable {
+    public var source: URL
     public var engine: String
+    public var targets: [Target]
     public var items: [PlanItem]
 }
 
@@ -70,10 +82,15 @@ public func targets(in parents: [URL], excluding source: URL) throws -> [Target]
 
 let partialDownload: Set<String> = ["download", "crdownload", "part", "partial"]
 
-public func makePlan(source: URL, targets: [Target], classifier: any Classifier, concurrency: Int) async throws -> Plan {
-    let files = try FileManager.default.contentsOfDirectory(at: source, includingPropertiesForKeys: [.isRegularFileKey], options: [.skipsHiddenFiles])
+/// The files a plan looks at: regular, visible files directly inside `source`, in Finder order.
+public func plannableFiles(in source: URL) throws -> [URL] {
+    try FileManager.default.contentsOfDirectory(at: source, includingPropertiesForKeys: [.isRegularFileKey], options: [.skipsHiddenFiles])
         .filter { try $0.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile == true }
         .sorted { $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending }
+}
+
+public func makePlan(source: URL, targets: [Target], classifier: any Classifier, concurrency: Int, onItem: @escaping @Sendable (PlanItem) -> Void = { _ in }) async throws -> Plan {
+    let files = try plannableFiles(in: source)
     let folders = targets.map(\.name)
 
     @Sendable func planOne(_ file: URL) async throws -> PlanItem {
@@ -98,9 +115,10 @@ public func makePlan(source: URL, targets: [Target], classifier: any Classifier,
         }
         while let item = try await group.next() {
             items.append(item)
+            onItem(item)
             if let file = next.next() { group.addTask { try await planOne(file) } }
         }
     }
     let order = Dictionary(uniqueKeysWithValues: files.enumerated().map { ($1, $0) })
-    return Plan(engine: classifier.name, items: items.sorted { order[$0.file]! < order[$1.file]! })
+    return Plan(source: source, engine: classifier.name, targets: targets, items: items.sorted { order[$0.file]! < order[$1.file]! })
 }

@@ -31,7 +31,7 @@ public struct History: Sendable {
         var moved: [Move] = []
         var skipped: [Skipped] = []
         for item in plan.items {
-            guard case .move(let target, _) = item.decision else { continue }
+            guard let target = item.decision.destination else { continue }
             guard fm.fileExists(atPath: item.file.path), try Stamp(of: item.file) == item.stamp else {
                 skipped.append(Skipped(file: item.file, reason: "missing or changed since the plan"))
                 continue
