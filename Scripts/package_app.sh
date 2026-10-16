@@ -14,9 +14,18 @@ BIN="$(swift build -c release --show-bin-path)"
 
 APP=build/Putaway.app
 rm -rf "$APP"
-mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Helpers"
+mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Helpers" "$APP/Contents/Resources"
 cp "$BIN/PutawayApp" "$APP/Contents/MacOS/Putaway"
 cp "$BIN/putaway" "$APP/Contents/Helpers/putaway"
+
+ICONSET=build/Putaway.iconset
+rm -rf "$ICONSET" && mkdir -p "$ICONSET"
+swift Scripts/make_icon.swift build/icon_1024.png
+for sz in 16 32 128 256 512; do
+  sips -z "$sz" "$sz" build/icon_1024.png --out "$ICONSET/icon_${sz}x${sz}.png" >/dev/null
+  sips -z $((sz * 2)) $((sz * 2)) build/icon_1024.png --out "$ICONSET/icon_${sz}x${sz}@2x.png" >/dev/null
+done
+iconutil -c icns "$ICONSET" -o "$APP/Contents/Resources/Putaway.icns"
 
 cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -27,6 +36,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
     <key>CFBundleDisplayName</key><string>Putaway</string>
     <key>CFBundleIdentifier</key><string>${BUNDLE_ID}</string>
     <key>CFBundleExecutable</key><string>Putaway</string>
+    <key>CFBundleIconFile</key><string>Putaway</string>
     <key>CFBundlePackageType</key><string>APPL</string>
     <key>CFBundleShortVersionString</key><string>${VERSION}</string>
     <key>CFBundleVersion</key><string>${BUILD_NUMBER}</string>
