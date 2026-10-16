@@ -109,7 +109,26 @@ public struct OnDeviceClassifier: Classifier {
         let schema = try GenerationSchema(root: DynamicGenerationSchema(name: "Folder", anyOf: folders), dependencies: [])
         let session = LanguageModelSession(instructions: "You file documents. Pick the folder the file belongs in.")
         let prompt = "\(describe(content))\n\nMy folders: \(folders.joined(separator: "; ")).\nWhich folder does this file belong in?"
-        let response = try await session.respond(to: prompt, schema: schema)
+        // Apple's guardrails refuse some ordinary government forms, such as a 1040, and call them "unsafe".
+        let refused = PutawayError(errorDescription: "Apple's on-device model would not read this file")
+        let response: LanguageModelSession.Response<GeneratedContent>
+        do {
+            response = try await session.respond(to: prompt, schema: schema)
+        } catch {
+            // macOS 27.0 still throws GenerationError, which it deprecates for LanguageModelError.
+            switch error {
+            case LanguageModelSession.GenerationError.guardrailViolation, LanguageModelSession.GenerationError.refusal:
+                throw refused
+            default:
+                if #available(macOS 27, *) {
+                    switch error {
+                    case LanguageModelError.guardrailViolation, LanguageModelError.refusal: throw refused
+                    default: break
+                    }
+                }
+                throw error
+            }
+        }
         return Verdict(folder: try response.content.value(String.self), confidence: nil)
     }
 }
