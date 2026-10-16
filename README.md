@@ -4,6 +4,10 @@ Putaway files the contents of a folder into the folders you already have.
 
 Point it at Downloads. It reads each file, picks one of your folders, and shows you the plan. Files it is sure about are ready to move. For the rest, it suggests a folder and you decide. Nothing moves until you click Move, and Undo puts everything back.
 
+![Putaway tidies a Downloads folder into existing folders, then moves 16 files](docs/demo.gif)
+
+The demo uses a SubQ key. With Apple Intelligence or your own model, you confirm each file.
+
 ## Install
 
 ```sh
@@ -23,12 +27,11 @@ Putaway needs a Mac with Apple silicon and macOS 26 or later.
 1. Open Putaway. It shows a tray icon in the menu bar.
 2. Click **Tidy Downloads**. Check the plan, then click **Move**.
 
-To change how Putaway picks folders, click **Change engine**. You have four choices:
+Putaway does not include a cloud service. It uses Apple Intelligence on your Mac by default. To change that, click **Change engine**:
 
-- **Apple Intelligence**: the default. It runs on your Mac and needs Apple Intelligence turned on. It suggests a folder for each file, and you confirm each one.
-- **SubQ Snap**: needs a SubQ API key from [console.subq.ai](https://console.subq.ai). It is the most accurate engine, and files it is sure about are ready to move.
-- **Jev**: needs a TypeSafe API key for Jev. It works the same way as SubQ.
+- **Apple Intelligence**: the default. It is free, runs on your Mac, and needs Apple Intelligence turned on. It suggests a folder for each file, and you confirm each one.
 - **Your own model**: any server with the OpenAI chat API, such as Ollama, LM Studio, llama.cpp, or mlx_lm. Enter its address, such as `http://localhost:11434/v1`, and the model name. It suggests a folder for each file, and you confirm each one.
+- **SubQ Snap or Jev, with your API key**: get a key from [SubQ](https://console.subq.ai) or [TypeSafe](https://docs.typesafe.ai). These services give a probability for each folder, so files they are sure about are ready to move.
 
 To tidy a different folder, click its name at the top of the window. To choose where files can go, click the folder name after "into folders in". Each subfolder of that folder is one choice.
 

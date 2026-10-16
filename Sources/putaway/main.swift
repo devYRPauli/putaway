@@ -16,7 +16,7 @@ let usage = """
           a SubQ key, then a Jev key, then Apple's on-device model.
           own: a server with the OpenAI chat API, such as Ollama at http://localhost:11434/v1.
 
-    Only the first \(textLimit) characters of a file's text leave the Mac, and only to the engine you set.
+    Your folder names and the first \(textLimit) characters of a file's text go to the engine you set.
     Apple's model keeps everything on the Mac. Files with credential-like names are never read.
     """
 

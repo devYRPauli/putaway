@@ -286,9 +286,9 @@ struct EngineSheet: View {
             Text("Engine").font(.headline)
             Picker("Engine", selection: $kind) {
                 Text("Apple Intelligence on this Mac").tag(Kind.apple)
-                Text("SubQ Snap").tag(Kind.subq)
-                Text("Jev").tag(Kind.jev)
                 Text("Your own model").tag(Kind.own)
+                Text("SubQ Snap, with your API key").tag(Kind.subq)
+                Text("Jev, with your API key").tag(Kind.jev)
             }
             .pickerStyle(.radioGroup)
             .labelsHidden()

@@ -147,6 +147,14 @@ func inbox(_ files: [String: Data]) throws -> (inbox: URL, targets: [Target]) {
     #expect(throws: PutawayError.self) { try targets(in: [root.appending(path: "A"), root.appending(path: "B")], excluding: root) }
 }
 
+@Test func appMadeLocalizedFoldersAreNotChoices() throws {
+    let root = try tempDir()
+    for path in ["Docs/Taxes", "Docs/Zoom", "Docs/Virtual Machines.localized"] {
+        try FileManager.default.createDirectory(at: root.appending(path: path), withIntermediateDirectories: true)
+    }
+    #expect(try targets(in: [root.appending(path: "Docs")], excluding: root).map(\.name) == ["Taxes", "Zoom"])
+}
+
 func onePlan(_ file: URL, to folder: URL) throws -> Plan {
     let target = Target(name: folder.lastPathComponent, url: folder)
     return Plan(source: file.deletingLastPathComponent(), engine: "fixed", targets: [target], items: [PlanItem(file: file, stamp: try Stamp(of: file), decision: .move(target, confidence: 0.9))])
@@ -279,4 +287,11 @@ func onePlan(_ file: URL, to folder: URL) throws -> Plan {
     let applied = try History(directory: root.appending(path: "state")).apply(plan)
     #expect(applied.moved.map(\.to.lastPathComponent) == ["b.txt"])
     #expect(applied.skipped.map(\.file.lastPathComponent) == ["a.txt"])
+}
+
+/// makePlan drops a file that vanished after listing by catching exactly this error; any other stat error stops the plan.
+@Test func stampOfAMissingFileIsNoSuchFile() throws {
+    let missing = try tempDir().appending(path: "gone.pdf")
+    let error = #expect(throws: CocoaError.self) { try Stamp(of: missing) }
+    #expect(error?.code == .fileReadNoSuchFile)
 }

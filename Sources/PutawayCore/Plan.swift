@@ -70,6 +70,8 @@ public func targets(in parents: [URL], excluding source: URL) throws -> [Target]
         for child in children.sorted(by: { $0.lastPathComponent < $1.lastPathComponent }) {
             let values = try child.resourceValues(forKeys: [.isDirectoryKey, .isPackageKey])
             guard values.isDirectory == true, values.isPackage != true, child.standardizedFileURL != source.standardizedFileURL else { continue }
+            // Only apps make ".localized" folders, such as Parallels VMs. Finder hides the suffix, so the user never chose them.
+            if child.lastPathComponent.hasSuffix(".localized") { continue }
             if let other = found.first(where: { $0.name == child.lastPathComponent }) {
                 throw PutawayError(errorDescription: "Two folders share the name \"\(child.lastPathComponent)\": \(other.url.path) and \(child.path)")
             }
@@ -107,7 +109,12 @@ public func makePlan(source: URL, targets: [Target], classifier: any Classifier,
     /// so read and classify failures become decisions; only an unusable engine throws.
     @Sendable func planOne(_ file: URL) async throws -> Planned? {
         try Task.checkCancellation()
-        guard let stamp = try? Stamp(of: file) else { return nil }
+        let stamp: Stamp
+        do {
+            stamp = try Stamp(of: file)
+        } catch CocoaError.fileReadNoSuchFile {
+            return nil
+        }
         func skip(_ reason: String) -> Planned { Planned(item: PlanItem(file: file, stamp: stamp, decision: .skip(reason))) }
         if isSensitive(file) { return skip("name suggests credentials; not read") }
         if partialDownload.contains(file.pathExtension.lowercased()) { return skip("still downloading") }
