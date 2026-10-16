@@ -32,9 +32,9 @@ final class Tidy {
     var phase = Phase.idle
     var plan: Plan?
     var rows: [Row] = []
-    var engineName = ""
-    /// Why no engine can run, shown instead of the Tidy button.
-    var engineProblem: String?
+    /// Nil when no engine can run; `engineProblem` says why.
+    private(set) var engine: (any Classifier)?
+    private(set) var engineProblem: String?
     private var work: Task<Void, Never>?
 
     var source: URL {
@@ -53,18 +53,12 @@ final class Tidy {
         refreshEngine()
     }
 
-    private(set) var hasSnapKey = false
-
-    /// Empty `engineName` means no engine can run: no SubQ key and no on-device model.
     func refreshEngine() {
         do {
-            let classifier = try chooseClassifier(.auto)
-            engineName = classifier.name
-            hasSnapKey = classifier is SnapClassifier
+            engine = try chooseClassifier(EngineChoice.load())
             engineProblem = nil
         } catch {
-            engineName = ""
-            hasSnapKey = false
+            engine = nil
             engineProblem = error.localizedDescription
         }
     }
@@ -76,8 +70,8 @@ final class Tidy {
 
     private func run(_ folder: URL) async {
         do {
-            let classifier = try chooseClassifier(.auto)
-            engineName = classifier.name
+            let classifier = try chooseClassifier(EngineChoice.load())
+            engine = classifier
             let found = try targets(in: parents, excluding: folder)
             let total = try plannableFiles(in: folder).count
             phase = .planning(done: 0, total: total)

@@ -5,14 +5,19 @@ let usage = """
     putaway: file what's in a folder into the folders you already have.
 
     usage:
-      putaway plan <folder> --into <dir> [--into <dir>...] [--engine auto|snap|local] [--json]
+      putaway plan <folder> --into <dir> [--into <dir>...] [--json]
           Shows where each file would go. Moves nothing. Subfolders of each --into dir are the choices.
       putaway apply     Moves the files marked MOVE in the last plan.
       putaway undo      Puts the last applied batch back.
-      putaway key       Reads a SubQ API key from stdin and stores it in the Keychain.
+      putaway key subq|jev
+          Reads a SubQ or Jev API key from stdin and stores it in the Keychain.
+      putaway engine [apple | subq | jev | own <base-url> <model>]
+          Shows or sets the engine. The app uses the same one. With none set, Putaway uses
+          a SubQ key, then a Jev key, then Apple's on-device model.
+          own: a server with the OpenAI chat API, such as Ollama at http://localhost:11434/v1.
 
-    Only the first \(textLimit) characters of a file's text leave the Mac, and only with the snap engine.
-    Files with credential-like names are never read.
+    Only the first \(textLimit) characters of a file's text leave the Mac, and only to the engine you set.
+    Apple's model keeps everything on the Mac. Files with credential-like names are never read.
     """
 
 let planFile = stateDirectory.appending(path: "plan.json")
@@ -35,19 +40,13 @@ func row(_ item: PlanItem) -> String {
 func plan(_ args: [String]) async throws {
     var source: URL?
     var parents: [URL] = []
-    var engine = Engine.auto
     var json = false
     var rest = args[...]
     while let arg = rest.popFirst() {
         switch arg {
-        case "--into", "--engine":
-            guard let value = rest.popFirst() else { fail("\(arg) needs a value") }
-            if arg == "--into" {
-                parents.append(URL(filePath: value, directoryHint: .isDirectory))
-            } else {
-                guard let parsed = Engine(rawValue: value) else { fail("unknown engine \"\(value)\"") }
-                engine = parsed
-            }
+        case "--into":
+            guard let value = rest.popFirst() else { fail("--into needs a value") }
+            parents.append(URL(filePath: value, directoryHint: .isDirectory))
         case "--json": json = true
         default:
             if source != nil || arg.hasPrefix("-") { fail("unexpected argument \(arg)\n\n\(usage)") }
@@ -55,7 +54,7 @@ func plan(_ args: [String]) async throws {
         }
     }
     guard let source, !parents.isEmpty else { fail(usage) }
-    let chosen = try chooseClassifier(engine)
+    let chosen = try chooseClassifier(EngineChoice.load())
     let started = Date()
     let result = try await makePlan(source: source, targets: targets(in: parents, excluding: source), classifier: chosen, concurrency: concurrency(for: chosen))
     try FileManager.default.createDirectory(at: stateDirectory, withIntermediateDirectories: true)
@@ -83,6 +82,26 @@ func apply() throws {
     try FileManager.default.removeItem(at: planFile)
 }
 
+func engine(_ args: [String]) throws {
+    let choice: EngineChoice
+    switch (args.first, args.count) {
+    case (nil, _):
+        let saved = try EngineChoice.load()
+        print("\(try chooseClassifier(saved).name)\(saved == nil ? " (automatic)" : "")")
+        return
+    case ("apple", 1): choice = .apple
+    case ("own", 3): choice = .own(try OwnModel(baseURL: args[1], model: args[2]))
+    case (let name?, 1):
+        guard let provider = Provider(rawValue: name) else { fail(usage) }
+        choice = .hosted(provider)
+    default: fail(usage)
+    }
+    // Check first, so a choice that cannot run, such as SubQ with no key, is never saved.
+    let classifier = try chooseClassifier(choice)
+    try choice.save()
+    print("Engine: \(classifier.name).")
+}
+
 func undo() throws {
     guard let result = try History(directory: stateDirectory).undo() else { fail("nothing to undo") }
     result.skipped.forEach { print("kept   \($0.file.lastPathComponent): \($0.reason)") }
@@ -96,10 +115,12 @@ do {
     case "apply": try apply()
     case "undo": try undo()
     case "key":
+        guard args.count == 2, let provider = Provider(rawValue: args[1]) else { fail(usage) }
         let key = (readLine() ?? "").trimmingCharacters(in: .whitespaces)
         if key.isEmpty { fail("no key on stdin") }
-        try KeyStore.save(key)
-        print("Saved the SubQ key to the Keychain.")
+        try KeyStore.save(key, for: provider)
+        print("Saved the \(provider.name) key to the Keychain.")
+    case "engine": try engine(Array(args.dropFirst()))
     default: print(usage)
     }
 } catch {

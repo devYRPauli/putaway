@@ -4,7 +4,7 @@ import SwiftUI
 
 struct TidyView: View {
     @Bindable var tidy: Tidy
-    @State private var showKey = false
+    @State private var showEngine = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -14,7 +14,7 @@ struct TidyView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .frame(minWidth: 620, minHeight: 440)
-        .sheet(isPresented: $showKey) { KeySheet(tidy: tidy) }
+        .sheet(isPresented: $showEngine) { EngineSheet(tidy: tidy) }
     }
 
     private var header: some View {
@@ -26,14 +26,17 @@ struct TidyView: View {
                 FolderButton(url: tidy.parents[0], label: tidy.parents.map(\.lastPathComponent).joined(separator: ", "), multiple: true) { tidy.parents = $0 }
             }
             HStack(spacing: 6) {
-                if tidy.hasSnapKey {
-                    Label("Using \(tidy.engineName). It sees your folder names and the first 1,000 characters of each file's text.", systemImage: "lock.shield")
-                } else if tidy.engineName.isEmpty {
-                    Label(tidy.engineProblem ?? "Add a SubQ key to start.", systemImage: "key")
-                } else {
-                    Label("Using \(tidy.engineName). It suggests folders; you confirm each one. Nothing leaves your Mac.", systemImage: "desktopcomputer")
+                switch tidy.engine {
+                case let hosted as DecisionClassifier:
+                    Label("Using \(hosted.name). It sees your folder names and the first 1,000 characters of each file's text.", systemImage: "lock.shield")
+                case let own as OwnModelClassifier:
+                    Label("Using \(own.name). It suggests folders; you confirm each one. Text goes only to that server.", systemImage: "server.rack")
+                case let engine?:
+                    Label("Using \(engine.name). It suggests folders; you confirm each one. Nothing leaves your Mac.", systemImage: "desktopcomputer")
+                case nil:
+                    Label(tidy.engineProblem ?? "Choose an engine to start.", systemImage: "key")
                 }
-                Button(tidy.hasSnapKey ? "Change key" : "Add SubQ key") { showKey = true }
+                Button("Change engine") { showEngine = true }
                     .buttonStyle(.link)
             }
             .font(.callout)
@@ -50,7 +53,7 @@ struct TidyView: View {
                     .controlSize(.large)
                     .buttonStyle(.borderedProminent)
                     .keyboardShortcut(.defaultAction)
-                    .disabled(tidy.engineName.isEmpty)
+                    .disabled(tidy.engine == nil)
                 Text("Nothing moves until you confirm. Undo is always available.")
                     .foregroundStyle(.secondary)
             }
@@ -243,26 +246,78 @@ struct Outcome<Actions: View>: View {
     }
 }
 
-struct KeySheet: View {
+struct EngineSheet: View {
+    enum Kind: Hashable {
+        case apple, subq, jev, own
+    }
+
     let tidy: Tidy
     @Environment(\.dismiss) private var dismiss
+    @State private var kind: Kind
     @State private var key = ""
+    @State private var baseURL = ""
+    @State private var model = ""
     @State private var error: String?
+
+    init(tidy: Tidy) {
+        self.tidy = tidy
+        var kind = Kind.apple
+        switch tidy.engine {
+        case let hosted as DecisionClassifier: kind = hosted.provider == .subq ? .subq : .jev
+        case let own as OwnModelClassifier:
+            kind = .own
+            _baseURL = State(initialValue: own.server.baseURL.absoluteString)
+            _model = State(initialValue: own.server.model)
+        default: break
+        }
+        _kind = State(initialValue: kind)
+    }
+
+    private var provider: Provider? {
+        switch kind {
+        case .subq: .subq
+        case .jev: .jev
+        case .apple, .own: nil
+        }
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("SubQ API key").font(.headline)
-            Text("Putaway sends your folder names and the first 1,000 characters of each file's text to SubQ to pick a folder. Files with names like passwords or recovery codes are never read, and text that looks like a key or token is never sent. The key is stored in your Keychain.")
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-            SecureField("Key", text: $key)
+            Text("Engine").font(.headline)
+            Picker("Engine", selection: $kind) {
+                Text("Apple Intelligence on this Mac").tag(Kind.apple)
+                Text("SubQ Snap").tag(Kind.subq)
+                Text("Jev").tag(Kind.jev)
+                Text("Your own model").tag(Kind.own)
+            }
+            .pickerStyle(.radioGroup)
+            .labelsHidden()
+            Group {
+                switch kind {
+                case .apple:
+                    Text("Nothing leaves your Mac. Apple's model suggests a folder for each file, and you confirm each one. It needs Apple Intelligence turned on.")
+                case .subq, .jev:
+                    Text("Putaway sends your folder names and the first 1,000 characters of each file's text to \(provider!.name). Files it is sure about are ready to move. Files with names like passwords or recovery codes are never read, and text that looks like a key or token is never sent. The key is stored in your Keychain.")
+                case .own:
+                    Text("Any server with the OpenAI chat API, such as Ollama, LM Studio, llama.cpp, or mlx_lm. Text goes only to that server. It suggests a folder for each file, and you confirm each one.")
+                }
+            }
+            .foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
+            if let provider {
+                SecureField(((try? KeyStore.load(provider)) ?? nil) == nil ? "\(provider.name) API key" : "Key saved. Type a new one to replace it.", text: $key)
+            }
+            if kind == .own {
+                TextField("Server, such as http://localhost:11434/v1", text: $baseURL)
+                TextField("Model, such as qwen2.5:7b-instruct", text: $model)
+            }
             if let error { Text(error).foregroundStyle(.red) }
             HStack {
                 Spacer()
                 Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
                 Button("Save") {
                     do {
-                        try KeyStore.save(key.trimmingCharacters(in: .whitespacesAndNewlines))
+                        try save()
                         tidy.refreshEngine()
                         dismiss()
                     } catch {
@@ -270,10 +325,24 @@ struct KeySheet: View {
                     }
                 }
                 .keyboardShortcut(.defaultAction)
-                .disabled(key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
         }
         .padding(20)
         .frame(width: 420)
+    }
+
+    private func save() throws {
+        let choice: EngineChoice
+        switch kind {
+        case .apple: choice = .apple
+        case .own: choice = .own(try OwnModel(baseURL: baseURL, model: model))
+        case .subq, .jev:
+            let key = key.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !key.isEmpty { try KeyStore.save(key, for: provider!) }
+            choice = .hosted(provider!)
+        }
+        // Throws for a choice that cannot run, such as SubQ with no key, before it is saved.
+        _ = try chooseClassifier(choice)
+        try choice.save()
     }
 }

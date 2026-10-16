@@ -21,8 +21,14 @@ Putaway needs a Mac with Apple silicon and macOS 26 or later.
 ## Use
 
 1. Open Putaway. It shows a tray icon in the menu bar.
-2. Add a SubQ API key. You can get one at [console.subq.ai](https://console.subq.ai).
-3. Click **Tidy Downloads**. Check the plan, then click **Move**.
+2. Click **Tidy Downloads**. Check the plan, then click **Move**.
+
+To change how Putaway picks folders, click **Change engine**. You have four choices:
+
+- **Apple Intelligence**: the default. It runs on your Mac and needs Apple Intelligence turned on. It suggests a folder for each file, and you confirm each one.
+- **SubQ Snap**: needs a SubQ API key from [console.subq.ai](https://console.subq.ai). It is the most accurate engine, and files it is sure about are ready to move.
+- **Jev**: needs a TypeSafe API key for Jev. It works the same way as SubQ.
+- **Your own model**: any server with the OpenAI chat API, such as Ollama, LM Studio, llama.cpp, or mlx_lm. Enter its address, such as `http://localhost:11434/v1`, and the model name. It suggests a folder for each file, and you confirm each one.
 
 To tidy a different folder, click its name at the top of the window. To choose where files can go, click the folder name after "into folders in". Each subfolder of that folder is one choice.
 
@@ -30,11 +36,11 @@ In Finder, you can also right-click any folder and choose **Services > Tidy with
 
 ## What leaves your Mac
 
-Putaway sends your folder names and the first 1,000 characters of each file's text to SubQ. It does not send whole files. For scans and images, Putaway reads the text on your Mac first and sends only that text. For a file with no text, such as a zip, Putaway sends only the file name, and you confirm the folder.
+With SubQ or Jev, Putaway sends your folder names and the first 1,000 characters of each file's text to that service. It does not send whole files. For scans and images, Putaway reads the text on your Mac first and sends only that text. For a file with no text, such as a zip, Putaway sends only the file name, and you confirm the folder.
 
 Putaway never reads files with names like `.env`, `id_rsa`, `*.pem`, `passwords.csv`, or `recovery-codes.txt`. It leaves them in place. If a file's text looks like a private key or an API token, Putaway does not send it.
 
-Without a SubQ key, Putaway uses the Apple Intelligence model on your Mac. Then nothing leaves your Mac, and Putaway only suggests folders. You confirm each file.
+With Apple Intelligence, nothing leaves your Mac. With your own model, the same text goes only to the server you entered.
 
 ## Safety
 
@@ -53,7 +59,18 @@ putaway apply
 putaway undo
 ```
 
-`putaway plan` moves nothing. `putaway apply` moves the files marked MOVE in the last plan. `putaway key` reads a SubQ key from standard input and stores it in the Keychain. The `SUBQ_API_KEY` environment variable overrides the stored key.
+`putaway plan` moves nothing. `putaway apply` moves the files marked MOVE in the last plan.
+
+The app and the command use the same engine. To set it from the command line:
+
+```sh
+putaway engine apple
+putaway engine subq
+putaway engine jev
+putaway engine own http://localhost:11434/v1 qwen2.5:7b-instruct
+```
+
+`putaway key subq` and `putaway key jev` read a key from standard input and store it in the Keychain. The `SUBQ_API_KEY` and `TYPESAFE_API_KEY` environment variables override the stored keys. If you set no engine, Putaway uses a SubQ key, then a Jev key, then Apple Intelligence.
 
 ## Build from source
 
