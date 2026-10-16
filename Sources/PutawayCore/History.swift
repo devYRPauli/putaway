@@ -38,8 +38,13 @@ public struct History: Sendable {
             }
             let move = Move(from: item.file, to: freeName(in: target.url, for: item.file.lastPathComponent), stamp: item.stamp)
             try log.write(contentsOf: JSONEncoder().encode(move) + Data("\n".utf8))
-            try fm.moveItem(at: move.from, to: move.to)
-            moved.append(move)
+            do {
+                try fm.moveItem(at: move.from, to: move.to)
+                moved.append(move)
+            } catch {
+                // The batch keeps the record; undo skips it because the file never arrived.
+                skipped.append(Skipped(file: item.file, reason: error.localizedDescription))
+            }
         }
         if moved.isEmpty { try fm.removeItem(at: batch) }
         return (moved, skipped)

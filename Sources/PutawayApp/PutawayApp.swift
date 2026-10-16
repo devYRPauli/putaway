@@ -52,7 +52,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.activate()
         window?.makeKeyAndOrderFront(nil)
         if let folder, !isBusy {
-            Task { await tidy.start(folder: folder) }
+            tidy.start(folder: folder)
         }
     }
 

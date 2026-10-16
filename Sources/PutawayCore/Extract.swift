@@ -7,8 +7,25 @@ import Vision
 public let textLimit = 1_000
 
 /// Names that may hold credentials. These files are never read or sent anywhere.
+/// `.key` is the one exception: Keynote decks share the extension with private keys, so the
+/// first 4 bytes are checked on the Mac. Only a zip archive, which is what a deck is, is cleared.
 public func isSensitive(_ url: URL) -> Bool {
-    url.lastPathComponent.contains(/(?i)^\.env|\.(pem|key|p12|pfx|kdbx|keychain|ovpn)$|^id_(rsa|dsa|ecdsa|ed25519)|recovery|backup.?codes|passwords?|secrets?|credentials?/)
+    let name = url.lastPathComponent
+    if name.lowercased().hasSuffix(".key"), isZipArchive(url) { return false }
+    // Inline: Regex is not Sendable, so it cannot be a global.
+    return name.contains(#/(?i)^\.env|\.(env|pem|key|p8|p12|pfx|ppk|jks|keystore|kdbx|keychain(-db)?|ovpn|1pux)$|^id_(rsa|dsa|ecdsa|ed25519)|recovery[ _-]?(codes?|keys?|kit)|backup[ _-]?codes?|emergency[ _-]?kit|(passwords?|secrets?|credentials?)([._-]|$)|access_?keys?\.csv|rootkey\.csv|seed[ _-]?phrase|mnemonic/#)
+}
+
+private func isZipArchive(_ url: URL) -> Bool {
+    guard let handle = try? FileHandle(forReadingFrom: url) else { return false }
+    defer { try? handle.close() }
+    return (try? handle.read(upToCount: 4)) == Data([0x50, 0x4B, 0x03, 0x04])
+}
+
+/// Text that looks like a credential, whatever the file is named. Checked on the extracted
+/// text, which is exactly what would leave the Mac.
+public func looksLikeSecret(_ text: String) -> Bool {
+    text.contains(#/-----BEGIN [A-Z ]*PRIVATE KEY|AKIA[0-9A-Z]{16}|\b(ghp|gho|ghu|ghs|github_pat)_[A-Za-z0-9_]{20,}|\bsk-[A-Za-z0-9_-]{20,}|\bsk_live_[A-Za-z0-9]{16,}|\bxox[abp]-[A-Za-z0-9-]{20,}|\bAIza[0-9A-Za-z_-]{35}/#)
 }
 
 /// Text read from the start of a file, or nil when the file has no readable text.
@@ -18,8 +35,7 @@ public func extractText(_ url: URL) async throws -> String? {
     if type.conforms(to: .pdf) {
         text = try await pdfText(url)
     } else if type.conforms(to: .image) {
-        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil), let image = CGImageSourceCreateImageAtIndex(source, 0, nil) else { return nil }
-        text = try await ocr(image)
+        text = try await ocr { ocrImage(url) }
     } else if type.conforms(to: .rtf) || type.conforms(to: .html) || ["docx", "doc", "odt"].contains(url.pathExtension.lowercased()) {
         text = try NSAttributedString(url: url, options: [:], documentAttributes: nil).string
     } else if type.conforms(to: .text) {
@@ -41,16 +57,29 @@ private func pdfText(_ url: URL) async throws -> String? {
     // A scanned PDF has no text layer; read its first page with OCR instead.
     let image = pages[0].thumbnail(of: CGSize(width: 1700, height: 2200), for: .mediaBox)
     guard let cg = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return nil }
-    return try await ocr(cg)
+    return try await ocr { cg }
+}
+
+/// The image, at most 4096 px on its long side. Decoding a 48 MP photo at full size costs ~200 MB.
+private func ocrImage(_ url: URL) -> CGImage? {
+    guard let source = CGImageSourceCreateWithURL(url as CFURL, nil) else { return nil }
+    let options: [CFString: Any] = [
+        kCGImageSourceCreateThumbnailFromImageAlways: true,
+        kCGImageSourceCreateThumbnailWithTransform: true,
+        kCGImageSourceThumbnailMaxPixelSize: 4096,
+    ]
+    return CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary)
 }
 
 // Vision blocks its calling thread. Run it on its own queue so it cannot starve the
-// Swift concurrency pool, which deadlocked with 8 OCR calls in flight.
+// Swift concurrency pool, which deadlocked with 8 OCR calls in flight. The image is decoded
+// on the queue too, so only one decoded image is in memory at a time.
 private let ocrQueue = DispatchQueue(label: "putaway.ocr")
 
-private func ocr(_ image: CGImage) async throws -> String {
+private func ocr(_ makeImage: @escaping @Sendable () -> CGImage?) async throws -> String? {
     try await withCheckedThrowingContinuation { continuation in
         ocrQueue.async {
+            guard let image = makeImage() else { return continuation.resume(returning: nil) }
             let request = VNRecognizeTextRequest()
             // Classification needs words, not perfect text.
             request.recognitionLevel = .fast

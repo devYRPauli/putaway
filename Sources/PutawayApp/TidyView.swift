@@ -27,9 +27,9 @@ struct TidyView: View {
             }
             HStack(spacing: 6) {
                 if tidy.hasSnapKey {
-                    Label("Using \(tidy.engineName). Only the first 1,000 characters of each file's text are sent.", systemImage: "lock.shield")
+                    Label("Using \(tidy.engineName). It sees your folder names and the first 1,000 characters of each file's text.", systemImage: "lock.shield")
                 } else if tidy.engineName.isEmpty {
-                    Label("Add a SubQ key to start.", systemImage: "key")
+                    Label(tidy.engineProblem ?? "Add a SubQ key to start.", systemImage: "key")
                 } else {
                     Label("Using \(tidy.engineName). It suggests folders; you confirm each one. Nothing leaves your Mac.", systemImage: "desktopcomputer")
                 }
@@ -46,7 +46,7 @@ struct TidyView: View {
         switch tidy.phase {
         case .idle:
             VStack(spacing: 12) {
-                Button("Tidy \(tidy.source.lastPathComponent)") { Task { await tidy.start() } }
+                Button("Tidy \(tidy.source.lastPathComponent)") { tidy.start() }
                     .controlSize(.large)
                     .buttonStyle(.borderedProminent)
                     .keyboardShortcut(.defaultAction)
@@ -59,11 +59,12 @@ struct TidyView: View {
                 ProgressView(value: Double(done), total: Double(max(total, 1)))
                     .frame(width: 280)
                 Text("Reading files: \(done) of \(total)").foregroundStyle(.secondary)
+                Button("Cancel") { tidy.cancel() }.keyboardShortcut(.cancelAction)
             }
         case .review:
             review
         case .applied(let moved, let kept):
-            Outcome(title: "Moved \(moved) \(moved == 1 ? "file" : "files").", kept: kept) {
+            Outcome(title: "Moved \(moved.count) \(moved.count == 1 ? "file" : "files").", moved: moved, kept: kept) {
                 Button("Undo") { tidy.undo() }
                 Button("Done") { tidy.cancel() }.keyboardShortcut(.defaultAction)
             }
@@ -100,6 +101,10 @@ struct TidyView: View {
             HStack {
                 Text("\(tidy.rows.count) files read").foregroundStyle(.secondary)
                 Spacer()
+                let open = tidy.openSuggestions.count
+                if open > 0 {
+                    Button("Accept \(open) \(open == 1 ? "suggestion" : "suggestions")") { tidy.acceptAllSuggestions() }
+                }
                 Button("Cancel") { tidy.cancel() }.keyboardShortcut(.cancelAction)
                 Button("Move \(tidy.chosenCount) \(tidy.chosenCount == 1 ? "file" : "files")") { tidy.apply() }
                     .buttonStyle(.borderedProminent)
@@ -207,12 +212,26 @@ struct FolderButton: View {
 
 struct Outcome<Actions: View>: View {
     let title: String
+    var moved: [Move] = []
     let kept: [Skipped]
     @ViewBuilder let actions: Actions
 
     var body: some View {
         VStack(spacing: 12) {
-            Text(title).font(.title3)
+            Text(title)
+                .font(.title3)
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: 480)
+            if !moved.isEmpty {
+                List(moved, id: \.to) { move in
+                    HStack {
+                        FileLabel(url: move.to)
+                        Spacer()
+                        Text(move.to.deletingLastPathComponent().lastPathComponent).foregroundStyle(.secondary)
+                    }
+                }
+                .frame(maxWidth: 520, maxHeight: 260)
+            }
             if !kept.isEmpty {
                 Text("Left in place: " + kept.map { "\($0.file.lastPathComponent) (\($0.reason))" }.joined(separator: ", "))
                     .foregroundStyle(.secondary)
@@ -233,7 +252,7 @@ struct KeySheet: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("SubQ API key").font(.headline)
-            Text("Putaway sends the first 1,000 characters of each file's text to SubQ to pick a folder. Files with names like passwords or recovery codes are never read. The key is stored in your Keychain.")
+            Text("Putaway sends your folder names and the first 1,000 characters of each file's text to SubQ to pick a folder. Files with names like passwords or recovery codes are never read, and text that looks like a key or token is never sent. The key is stored in your Keychain.")
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             SecureField("Key", text: $key)

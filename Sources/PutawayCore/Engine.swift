@@ -18,7 +18,7 @@ public func chooseClassifier(_ engine: Engine) throws -> any Classifier {
         throw PutawayError(errorDescription: "No SubQ key. Add one in Putaway, run `putaway key`, or set SUBQ_API_KEY.")
     }
     if let reason = OnDeviceClassifier.unavailableReason {
-        throw PutawayError(errorDescription: engine == .auto ? "No SubQ key, and \(reason)" : reason)
+        throw PutawayError(errorDescription: engine == .auto ? "\(reason) Or add a SubQ key." : reason)
     }
     return OnDeviceClassifier()
 }

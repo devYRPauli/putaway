@@ -24,7 +24,7 @@ final class Tidy {
         case idle
         case planning(done: Int, total: Int)
         case review
-        case applied(moved: Int, kept: [Skipped])
+        case applied(moved: [Move], kept: [Skipped])
         case undone(restored: Int, kept: [Skipped])
         case failed(String)
     }
@@ -33,6 +33,9 @@ final class Tidy {
     var plan: Plan?
     var rows: [Row] = []
     var engineName = ""
+    /// Why no engine can run, shown instead of the Tidy button.
+    var engineProblem: String?
+    private var work: Task<Void, Never>?
 
     var source: URL {
         didSet { UserDefaults.standard.set(source.path, forKey: "source") }
@@ -54,13 +57,24 @@ final class Tidy {
 
     /// Empty `engineName` means no engine can run: no SubQ key and no on-device model.
     func refreshEngine() {
-        let classifier = try? chooseClassifier(.auto)
-        engineName = classifier?.name ?? ""
-        hasSnapKey = classifier is SnapClassifier
+        do {
+            let classifier = try chooseClassifier(.auto)
+            engineName = classifier.name
+            hasSnapKey = classifier is SnapClassifier
+            engineProblem = nil
+        } catch {
+            engineName = ""
+            hasSnapKey = false
+            engineProblem = error.localizedDescription
+        }
     }
 
-    func start(folder: URL? = nil) async {
-        let folder = folder ?? source
+    func start(folder: URL? = nil) {
+        work?.cancel()
+        work = Task { await run(folder ?? source) }
+    }
+
+    private func run(_ folder: URL) async {
         do {
             let classifier = try chooseClassifier(.auto)
             engineName = classifier.name
@@ -72,11 +86,35 @@ final class Tidy {
                     if case .planning(let done, let total) = self.phase { self.phase = .planning(done: done + 1, total: total) }
                 }
             }
+            if Task.isCancelled { return }
             self.plan = plan
             rows = plan.items.map { Row(item: $0, choice: $0.decision.destination) }
             phase = .review
         } catch {
-            phase = .failed(error.localizedDescription)
+            // cancel() has already reset the window.
+            if Task.isCancelled { return }
+            phase = .failed(describe(error))
+        }
+    }
+
+    /// Folder access refused in Privacy & Security reads as a bare "no permission"; say where to fix it.
+    private func describe(_ error: any Error) -> String {
+        let error = error as NSError
+        guard error.domain == NSCocoaErrorDomain, error.code == NSFileReadNoPermissionError else { return error.localizedDescription }
+        let name = (error.userInfo[NSFilePathErrorKey] as? String).map { URL(filePath: $0).lastPathComponent } ?? "this folder"
+        return "Putaway is not allowed to open \(name). Allow it in System Settings > Privacy & Security > Files & Folders, then try again."
+    }
+
+    /// "Your call" rows the user has not picked a folder for yet.
+    var openSuggestions: [Row] {
+        rows.filter { row in
+            if case .ask = row.item.decision { row.choice == nil } else { false }
+        }
+    }
+
+    func acceptAllSuggestions() {
+        for row in openSuggestions {
+            if let i = rows.firstIndex(where: { $0.id == row.id }) { rows[i].choice = row.suggestion?.target }
         }
     }
 
@@ -93,7 +131,7 @@ final class Tidy {
         }
         do {
             let result = try History(directory: stateDirectory).apply(plan)
-            phase = .applied(moved: result.moved.count, kept: result.skipped)
+            phase = .applied(moved: result.moved, kept: result.skipped)
             self.plan = nil
             rows = []
         } catch {
@@ -114,6 +152,8 @@ final class Tidy {
     }
 
     func cancel() {
+        work?.cancel()
+        work = nil
         plan = nil
         rows = []
         phase = .idle

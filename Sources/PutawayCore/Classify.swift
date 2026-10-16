@@ -34,6 +34,11 @@ public struct PutawayError: LocalizedError {
     public var errorDescription: String?
 }
 
+/// The engine cannot classify anything, for example because the key was rejected. Stops the whole plan.
+public struct ClassifierUnavailable: LocalizedError {
+    public var errorDescription: String?
+}
+
 /// SubQ Snap decisions API. The answer set is closed: Snap must pick one of `folders`.
 public struct SnapClassifier: Classifier {
     public let name = "SubQ Snap"
@@ -71,6 +76,9 @@ public struct SnapClassifier: Classifier {
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
         let (data, response) = try await URLSession.shared.data(for: request)
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+        if status == 401 || status == 403 {
+            throw ClassifierUnavailable(errorDescription: "SubQ rejected the API key (HTTP \(status)). Check the key and try again.")
+        }
         guard status == 200 else {
             throw PutawayError(errorDescription: "SubQ returned HTTP \(status): \(String(decoding: data.prefix(300), as: UTF8.self))")
         }
@@ -90,7 +98,10 @@ public struct OnDeviceClassifier: Classifier {
     public static var unavailableReason: String? {
         switch SystemLanguageModel.default.availability {
         case .available: nil
-        case .unavailable(let reason): "Apple on-device model unavailable: \(reason)"
+        case .unavailable(.deviceNotEligible): "This Mac cannot run Apple Intelligence."
+        case .unavailable(.appleIntelligenceNotEnabled): "Apple Intelligence is off. Turn it on in System Settings > Apple Intelligence & Siri."
+        case .unavailable(.modelNotReady): "Apple Intelligence is still downloading its model. Try again later."
+        case .unavailable(let reason): "Apple Intelligence is unavailable: \(reason)."
         }
     }
 

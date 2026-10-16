@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Builds build/Putaway.app: the menu bar app, with the putaway CLI in Contents/Helpers.
+# Builds build/Putaway.app (the menu bar app, with the putaway CLI in Contents/Helpers)
+# and build/Putaway.zip, the release asset that install.sh downloads.
 # Signs ad hoc unless APP_IDENTITY names a "Developer ID Application" certificate.
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -42,6 +43,9 @@ cat > "$APP/Contents/Info.plist" <<PLIST
     <key>CFBundleVersion</key><string>${BUILD_NUMBER}</string>
     <key>LSMinimumSystemVersion</key><string>26.0</string>
     <key>LSUIElement</key><true/>
+    <key>NSDownloadsFolderUsageDescription</key><string>Putaway reads the files in Downloads to suggest where each one goes.</string>
+    <key>NSDocumentsFolderUsageDescription</key><string>Putaway files things into the folders in Documents.</string>
+    <key>NSDesktopFolderUsageDescription</key><string>Putaway can tidy your Desktop or file things into folders there.</string>
     <key>NSServices</key>
     <array>
         <dict>
@@ -64,4 +68,6 @@ fi
 codesign "${SIGN[@]}" "$APP/Contents/Helpers/putaway"
 codesign "${SIGN[@]}" "$APP"
 codesign --verify --deep --strict "$APP"
-echo "Built $APP ($VERSION, build $BUILD_NUMBER)"
+rm -f build/Putaway.zip
+ditto --norsrc -c -k --keepParent "$APP" build/Putaway.zip
+echo "Built $APP and build/Putaway.zip ($VERSION, build $BUILD_NUMBER)"

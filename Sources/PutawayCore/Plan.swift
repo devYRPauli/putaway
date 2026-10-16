@@ -52,8 +52,10 @@ public struct Plan: Codable, Sendable {
     public var items: [PlanItem]
 }
 
-public func decide(_ verdict: Verdict, content: FileContent, targets: [Target]) -> Decision {
-    let target = targets.first { $0.name == verdict.folder }!
+public func decide(_ verdict: Verdict, content: FileContent, targets: [Target]) throws -> Decision {
+    guard let target = targets.first(where: { $0.name == verdict.folder }) else {
+        throw PutawayError(errorDescription: "The engine picked \"\(verdict.folder)\", which is not one of your folders")
+    }
     if case .text = content, let confidence = verdict.confidence, confidence >= autoMoveConfidence {
         return .move(target, confidence: confidence)
     }
@@ -75,7 +77,8 @@ public func targets(in parents: [URL], excluding source: URL) throws -> [Target]
         }
     }
     guard found.count >= 2 else {
-        throw PutawayError(errorDescription: "Need at least 2 folders to sort into, found \(found.count)")
+        let names = parents.map(\.lastPathComponent).joined(separator: ", ")
+        throw PutawayError(errorDescription: "Putaway needs at least 2 folders inside \(names) to sort files into, and found \(found.count). Make a few in Finder, such as Taxes, Receipts, and Work, or choose another folder.")
     }
     return found
 }
@@ -93,32 +96,58 @@ public func makePlan(source: URL, targets: [Target], classifier: any Classifier,
     let files = try plannableFiles(in: source)
     let folders = targets.map(\.name)
 
-    @Sendable func planOne(_ file: URL) async throws -> PlanItem {
-        let stamp = try Stamp(of: file)
-        if isSensitive(file) {
-            return PlanItem(file: file, stamp: stamp, decision: .skip("name suggests credentials; not read"))
-        }
-        if partialDownload.contains(file.pathExtension.lowercased()) {
-            return PlanItem(file: file, stamp: stamp, decision: .skip("still downloading"))
-        }
-        let content: FileContent = try await extractText(file).map { .text($0) } ?? .nameOnly(file.lastPathComponent)
-        let verdict = try await classifier.classify(content, folders: folders)
-        return PlanItem(file: file, stamp: stamp, decision: decide(verdict, content: content, targets: targets))
+    /// One planned file, and the classifier error if it was sent and failed.
+    struct Planned: Sendable {
+        var item: PlanItem
+        var sent = false
+        var error: (any Error)?
     }
 
-    var items: [PlanItem] = []
-    try await withThrowingTaskGroup(of: PlanItem.self) { group in
+    /// Nil when the file disappeared after it was listed. One bad file must not stop the plan,
+    /// so read and classify failures become decisions; only an unusable engine throws.
+    @Sendable func planOne(_ file: URL) async throws -> Planned? {
+        try Task.checkCancellation()
+        guard let stamp = try? Stamp(of: file) else { return nil }
+        func skip(_ reason: String) -> Planned { Planned(item: PlanItem(file: file, stamp: stamp, decision: .skip(reason))) }
+        if isSensitive(file) { return skip("name suggests credentials; not read") }
+        if partialDownload.contains(file.pathExtension.lowercased()) { return skip("still downloading") }
+        // An unreadable file, such as a broken .docx, is filed by name, which never auto-moves.
+        let text = (try? await extractText(file)) ?? nil
+        try Task.checkCancellation()
+        let content: FileContent = text.map { .text($0) } ?? .nameOnly(file.lastPathComponent)
+        if let text, looksLikeSecret(text) { return skip("looks like it contains credentials; not sent") }
+        do {
+            let verdict = try await classifier.classify(content, folders: folders)
+            return Planned(item: PlanItem(file: file, stamp: stamp, decision: try decide(verdict, content: content, targets: targets)), sent: true)
+        } catch let error as ClassifierUnavailable {
+            throw error
+        } catch {
+            try Task.checkCancellation()
+            var planned = skip("could not pick a folder: \(error.localizedDescription)")
+            planned.sent = true
+            planned.error = error
+            return planned
+        }
+    }
+
+    var planned: [Planned] = []
+    try await withThrowingTaskGroup(of: Planned?.self) { group in
         var next = files.makeIterator()
         for _ in 0..<concurrency {
             guard let file = next.next() else { break }
             group.addTask { try await planOne(file) }
         }
-        while let item = try await group.next() {
-            items.append(item)
-            onItem(item)
+        while let result = try await group.next() {
+            if let result {
+                planned.append(result)
+                onItem(result.item)
+            }
             if let file = next.next() { group.addTask { try await planOne(file) } }
         }
     }
+    // When every file sent to the engine failed, the engine is down; an all-skipped plan would hide that.
+    let sent = planned.filter(\.sent)
+    if !sent.isEmpty, sent.allSatisfy({ $0.error != nil }), let error = sent[0].error { throw error }
     let order = Dictionary(uniqueKeysWithValues: files.enumerated().map { ($1, $0) })
-    return Plan(source: source, engine: classifier.name, targets: targets, items: items.sorted { order[$0.file]! < order[$1.file]! })
+    return Plan(source: source, engine: classifier.name, targets: targets, items: planned.map(\.item).sorted { order[$0.file]! < order[$1.file]! })
 }

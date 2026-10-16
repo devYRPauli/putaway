@@ -7,12 +7,16 @@ Point it at Downloads. It reads each file, picks one of your folders, and shows 
 ## Install
 
 ```sh
-brew install --cask devyrpauli/tap/putaway
+curl -fsSL https://raw.githubusercontent.com/devYRPauli/putaway/main/install.sh | bash
 ```
 
-Or download `Putaway.zip` from [Releases](https://github.com/devYRPauli/putaway/releases), unzip it, and drag Putaway to Applications.
+This puts Putaway in `~/Applications` and opens it. Or use Homebrew:
 
-Putaway needs macOS 26 or later.
+```sh
+brew install devyrpauli/tap/putaway
+```
+
+Putaway needs a Mac with Apple silicon and macOS 26 or later.
 
 ## Use
 
@@ -26,9 +30,9 @@ In Finder, you can also right-click any folder and choose **Services > Tidy with
 
 ## What leaves your Mac
 
-Putaway sends the first 1,000 characters of each file's text to SubQ. It does not send whole files. For scans and images, Putaway reads the text on your Mac first and sends only that text. For a file with no text, such as a zip, Putaway sends only the file name, and you confirm the folder.
+Putaway sends your folder names and the first 1,000 characters of each file's text to SubQ. It does not send whole files. For scans and images, Putaway reads the text on your Mac first and sends only that text. For a file with no text, such as a zip, Putaway sends only the file name, and you confirm the folder.
 
-Putaway never reads files with names like `.env`, `id_rsa`, `*.pem`, `passwords.csv`, or `recovery-codes.txt`. It leaves them in place.
+Putaway never reads files with names like `.env`, `id_rsa`, `*.pem`, `passwords.csv`, or `recovery-codes.txt`. It leaves them in place. If a file's text looks like a private key or an API token, Putaway does not send it.
 
 Without a SubQ key, Putaway uses the Apple Intelligence model on your Mac. Then nothing leaves your Mac, and Putaway only suggests folders. You confirm each file.
 
@@ -41,10 +45,9 @@ Without a SubQ key, Putaway uses the Apple Intelligence model on your Mac. Then 
 
 ## Command line
 
-The app includes a `putaway` command:
+Both install methods add a `putaway` command:
 
 ```sh
-ln -s /Applications/Putaway.app/Contents/Helpers/putaway /usr/local/bin/putaway
 putaway plan ~/Downloads --into ~/Documents
 putaway apply
 putaway undo
