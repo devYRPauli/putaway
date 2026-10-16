@@ -95,6 +95,30 @@ func inbox(_ files: [String: Data]) throws -> (inbox: URL, targets: [Target]) {
     #expect(try await extractText(dir.appending(path: "b.dmg")) == nil)
 }
 
+@Test func htmlGivesTitleThenVisibleText() async throws {
+    let dir = try tempDir()
+    let html = """
+    <html><head><title>Mortgage &amp; loans</title><style>p { color: red }</style></head>
+    <body><script>var x = "<b>hidden</b>";</script><nav>Main menu</nav><img src="http://127.0.0.1:9/x.png">
+    <p>A mortgage is a <b>loan</b>.</p><!-- note --></body></html>
+    """
+    try write(html, to: dir.appending(path: "page.html"))
+    #expect(try await extractText(dir.appending(path: "page.html")) == "Mortgage & loans\nA mortgage is a loan .")
+}
+
+@Test func excelWorkbookGivesItsCellText() async throws {
+    let dir = try tempDir()
+    let parts = dir.appending(path: "parts")
+    try write(#"<sst><si><t>Region</t></si><si><t>Sales 2024</t></si></sst>"#, to: parts.appending(path: "xl/sharedStrings.xml"))
+    let zip = Process()
+    zip.executableURL = URL(filePath: "/usr/bin/zip")
+    zip.currentDirectoryURL = parts
+    zip.arguments = ["-qr", dir.appending(path: "q[1].xlsx").path, "xl"]
+    try zip.run()
+    zip.waitUntilExit()
+    #expect(try await extractText(dir.appending(path: "q[1].xlsx")) == "Region Sales 2024")
+}
+
 @Test func planSkipsCredentialsAndPartialDownloadsWithoutReadingThem() async throws {
     let root = try tempDir()
     let inbox = root.appending(path: "Downloads")

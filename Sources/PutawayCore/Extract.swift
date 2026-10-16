@@ -36,17 +36,72 @@ public func extractText(_ url: URL) async throws -> String? {
         text = try await pdfText(url)
     } else if type.conforms(to: .image) {
         text = try await ocr { ocrImage(url) }
-    } else if type.conforms(to: .rtf) || type.conforms(to: .html) || ["docx", "doc", "odt"].contains(url.pathExtension.lowercased()) {
-        text = try NSAttributedString(url: url, options: [:], documentAttributes: nil).string
+    } else if type.conforms(to: .html) {
+        text = try htmlText(url)
+    } else if let documentType = documentTypes[url.pathExtension.lowercased()] {
+        // An explicit type, so a mislabeled file can never reach the HTML importer.
+        text = try NSAttributedString(url: url, options: [.documentType: documentType], documentAttributes: nil).string
+    } else if url.pathExtension.lowercased() == "xlsx" {
+        text = try await workbookText(url)
     } else if type.conforms(to: .text) {
-        let handle = try FileHandle(forReadingFrom: url)
-        defer { try? handle.close() }
-        text = String(decoding: try handle.read(upToCount: textLimit * 4) ?? Data(), as: UTF8.self)
+        text = try readStart(url, bytes: textLimit * 4)
     } else {
         text = nil
     }
     guard let text, text.contains(where: { $0.isLetter }) else { return nil }
     return String(text.prefix(textLimit))
+}
+
+private let documentTypes: [String: NSAttributedString.DocumentType] = [
+    "rtf": .rtf, "doc": .docFormat, "docx": .officeOpenXML, "odt": .openDocument,
+]
+
+private func readStart(_ url: URL, bytes: Int) throws -> String {
+    let handle = try FileHandle(forReadingFrom: url)
+    defer { try? handle.close() }
+    return String(decoding: try handle.read(upToCount: bytes) ?? Data(), as: UTF8.self)
+}
+
+/// The title, then the visible text. Not NSAttributedString: its HTML importer runs WebKit,
+/// which loads the page's images from the network and took 63 s on one Wikipedia page.
+private func htmlText(_ url: URL) throws -> String {
+    let html = try readStart(url, bytes: 512 * 1024)
+    let title = html.range(of: "(?is)<title[^>]*>.*?</title>", options: .regularExpression).map { markupText(String(html[$0])) }
+    return [title, markupText(html)].compactMap { $0 }.joined(separator: "\n")
+}
+
+/// Text of HTML or XML without the parts a reader never sees. Nothing is fetched or run.
+private func markupText(_ markup: String) -> String {
+    let stripped = markup
+        .replacingOccurrences(of: #"(?is)<(head|script|style|nav)\b.*?</\1\s*>|<!--.*?-->"#, with: " ", options: .regularExpression)
+        .replacingOccurrences(of: "<[^>]*>", with: " ", options: .regularExpression)
+    let text = CFXMLCreateStringByUnescapingEntities(nil, stripped as CFString, nil) as String
+    return text.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+}
+
+/// The cell text of an Excel workbook, from its shared strings. Foundation cannot read a zip
+/// archive, so the system unzip does. It blocks, so it runs off the Swift concurrency pool.
+private func workbookText(_ url: URL) async throws -> String {
+    try await withCheckedThrowingContinuation { continuation in
+        DispatchQueue.global().async {
+            do {
+                let unzip = Process()
+                unzip.executableURL = URL(filePath: "/usr/bin/unzip")
+                unzip.arguments = ["-p", url.path, "xl/sharedStrings.xml"]
+                let pipe = Pipe()
+                unzip.standardOutput = pipe
+                unzip.standardError = FileHandle.nullDevice
+                try unzip.run()
+                // Stop reading early; a large workbook would otherwise fill the pipe.
+                let data = try pipe.fileHandleForReading.read(upToCount: textLimit * 8) ?? Data()
+                unzip.terminate()
+                unzip.waitUntilExit()
+                continuation.resume(returning: markupText(String(decoding: data, as: UTF8.self)))
+            } catch {
+                continuation.resume(throwing: error)
+            }
+        }
+    }
 }
 
 private func pdfText(_ url: URL) async throws -> String? {
